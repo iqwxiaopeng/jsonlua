@@ -1,7 +1,17 @@
--- json.lua
+-- A Json Reader and Writer implemented in Lua-5.3
+-- Copyright (c) 2016 sysu_AT < owtotwo@163.com >
 
-json = {}
+-- Using GNU Lesser General Public License (LGPL)
+-- [ http://www.gnu.org/licenses/lgpl-3.0.en.html ] for License Text
+-- [ https://en.wikipedia.org/wiki/MD5 ] for Algorithm Detials
 
+
+-- API --
+-- Reader : json.parse('["a", 123, -123.45e-67, true, null]')
+-- Writer : json.stringify({"a", 123, -123.45e-67, true, null})
+local json = {}
+
+-- jsondata for parser
 local jsondata = {}
 jsondata.__index = jsondata
 
@@ -41,29 +51,19 @@ function jsondata:match(pattern)
 	return result
 end
 
-jsondata.escapes = {['"'] = '"', ['\\'] = '\\', ['/'] = '/',
-	['b'] = '\b', ['f'] = '\f', ['n'] = '\n', ['r'] = '\r',
+jsondata.escape_from = {['"'] = '"', ['\\'] = '\\', ['/'] = '/',
+	['b'] = '\b', ['f'] = '\f', ['n'] = '\n', ['r'] = '\r', 
 	['t'] = '\t'}
-
---
--- FROM: string, number, object, array, true or false, null
--- TO: string, number, table[string], table[number], boolean, nil
--- 
-function json.parse(text)
-	local t = jsondata:new(text)
-	return assert(json.parse_object(t) or json.parse_array(t), 
-		"Not an Object or an Array")
-end
-
-function json.stringify(obj)
-	-- TODO
-end
+	
+jsondata.escape_to = {['"'] = '\\"', ['\\'] = '\\\\', ['/'] = '\\/',
+	['\b'] = '\\b', ['\f'] = '\\f', ['\n'] = '\\n', ['\r'] = '\\r', 
+	['\t'] = '\\t'}
 
 
--- aux functions
+
+-- aux functions for parser
 
 function json.parse_string(t)
-	
 	local chars = {}
 	t:take('"')
 	while true do
@@ -75,7 +75,7 @@ function json.parse_string(t)
 				t:move(5) -- should be modified
 				-- TODO
 			else
-				table.insert(chars, assert(jsondata.escapes[t:cur()]))
+				table.insert(chars, assert(jsondata.escape_from[t:cur()]))
 				t:move()
 			end
 		else
@@ -88,7 +88,6 @@ function json.parse_string(t)
 end
 
 function json.parse_number(t)
-	
 	local first = t.index
 	if t:look() == '-' then t:move() end
 	if t:cur() == '0' then t:move() else t:match("[1-9][0-9]*") end
@@ -102,7 +101,6 @@ function json.parse_number(t)
 end
 
 function json.parse_object(t)
-	
 	local obj = {}
 	t:take('{')
 	if t:look() ~= '}' then
@@ -119,8 +117,7 @@ function json.parse_object(t)
 end
 
 function json.parse_array(t)
-	
-	local arr = {}
+	local arr = { [0] = true } -- identify the array type
 	t:take('[')
 	if t:look() ~= ']' then
 		while true do
@@ -134,7 +131,6 @@ function json.parse_array(t)
 end
 
 function json.parse_value(t)
-	
 	local c = t:look()
 	if c == '{' then return json.parse_object(t) end
 	if c == '[' then return json.parse_array(t) end
@@ -154,14 +150,94 @@ function json.parse_value(t)
 	return json.parse_number(t)
 end
 
-local tmp = json.parse_number(jsondata:new("   -123.45e+16  "))
 
-tmp = json.parse_string(jsondata:new("\"hello\\n world\""))
+-- aux functions for serializer
+
+function json.stringify_string(obj)
+	return '"' .. obj:gsub("[\"\\/\b\f\n\r\t]", jsondata.escape_to) .. '"'
+end
+
+function json.stringify_value(obj, layout, indent)
+
+	layout = layout or 1
+	indent = indent or "    " -- four space by default
+
+	if type(obj) == 'number' then
+		return tostring(obj)
+	elseif type(obj) == 'boolean' then
+		return tostring(obj)
+	elseif type(obj) == 'string' then
+		return json.stringify_string(obj)
+	elseif type(obj) == 'function' then
+		error("function can not be serialized in json")
+	elseif type(obj) == 'userdata' then
+		error("userdata can not be serialized in json")
+	elseif type(obj) == 'thread' then
+		error("thread can not be serialized in json")
+	elseif type(obj) == 'table' then
+
+		local ret = {}
+		local first_in = true
+
+		if obj[0] == true then -- Array
+			table.insert(ret, '[')
+			for _, v in ipairs(obj) do
+				if not first_in then
+					table.insert(ret, ",\n")
+				else
+					first_in = false
+					table.insert(ret, "\n")
+				end
+				table.insert(ret, string.rep(indent, layout)
+					.. json.stringify_value(v, layout + 1))
+			end
+			if not first_in then 
+				table.insert(ret, "\n" .. string.rep(indent, layout - 1))
+			end
+			table.insert(ret, "]")
+		else -- Object
+			table.insert(ret, '{')
+			for k, v in pairs(obj) do
+				if not first_in then
+					table.insert(ret, ",\n")
+				else
+					first_in = false
+					table.insert(ret, "\n")
+				end
+				table.insert(ret, string.rep(indent, layout)
+					.. json.stringify_string(k, layout + 1) .. ': '
+					.. json.stringify_value(v, layout + 1))
+			end
+			if not first_in then 
+				table.insert(ret, "\n" .. string.rep(indent, layout - 1))
+			end
+			table.insert(ret, "}")
+		end
+
+		return table.concat(ret)
+		
+	else -- nil type
+		return "null" -- "nil" expected
+	end
+end
 
 
-local file = assert(io.open("data.json"))
-tmp = json.parse(file:read('a'))
-serialize = require "serialize"
-print(serialize(tmp))
+
+------------------------- API --------------------------
+
+--
+-- FROM: string, number, object, array, true or false, null
+-- TO: string, number, table[string], table[number], boolean, nil
+-- 
+function json.parse(text)
+	local t = jsondata:new(text)
+	if t:look() == '{' then return json.parse_object(t)
+	elseif t:look() == '[' then return json.parse_array(t)
+	else error("Not an Object or an Array") end
+end
+
+function json.stringify(obj)
+	return json.stringify_value(obj)
+end
 
 return json
