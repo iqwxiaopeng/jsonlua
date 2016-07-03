@@ -11,6 +11,7 @@
 -- Writer : json.stringify({"a", 123, -123.45e-67, true, null})
 local json = {}
 
+
 -- jsondata for parser
 local jsondata = {}
 jsondata.__index = jsondata
@@ -51,6 +52,57 @@ function jsondata:match(pattern)
 	return result
 end
 
+
+--
+-- Convert UCS-2 big-endian to UTF-8.
+-- @param s: a string in Unicode UCS-2 big-endian code,
+-- @ret : a string in Unicode UTF-8 code,
+-- i.e. : s = {0x4E, 0x25}; // UCS-2 big-endian
+--   ucs2be_to_utf8(s) return a string {0xE4, 0xB8, 0xA5}. // UTF-8
+--
+local function ucs2be_to_utf8(str)
+	local ret = ""
+	for i = 1, #str, 2 do
+		local n = (str:byte(i) << 8) | (str:byte(i + 1))
+		if n < 0x0080 then
+			ret = ret .. str:sub(i + 1)
+		elseif n < 0x0800 then
+			ret = ret .. string.char(0xc0 | ((n >> 6) & 0x1f))
+				.. string.char(0x80 | (n & 0x3f))
+		else
+			ret = ret .. string.char(0xe0 | ((n >> 12) & 0x0f)) 
+				.. string.char(0x80 | ((n >> 6) & 0x3f)) 
+				.. string.char(0x80 | (n & 0x3f))
+		end
+	end
+	return ret
+end
+
+
+--
+-- Convert four char to a UTF-8 string.
+-- i.e. : unicodeToAsciis("4E25") return a string {0xE4, 0xB8, 0xA5}.
+--
+local function unicodeToAsciis(str)
+	assert(type(str) == 'string' and #str == 4)
+	local ret, tmp = {}, 0x0
+	for i = 1, #str do
+		local c = str:sub(i)
+		if c >= '0' and c <= '9' then
+			tmp = (tmp << 4) | (c:byte() - string.byte('0'))
+		elseif (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F') then
+			tmp = (tmp << 4) | (c:lower():byte() - string.byte('a') + 0xa)
+		else error("invalid Unicode") end
+		if i % 2 == 0 then
+			table.insert(ret, string.char(tmp))
+			tmp = 0x0
+		end
+	end
+	return table.concat(ret)
+end
+
+
+
 jsondata.escape_from = {['"'] = '"', ['\\'] = '\\', ['/'] = '/',
 	['b'] = '\b', ['f'] = '\f', ['n'] = '\n', ['r'] = '\r', 
 	['t'] = '\t'}
@@ -72,8 +124,9 @@ function json.parse_string(t)
 		if c == '\\' then
 			t:move()
 			if t:cur() == 'u' then
-				t:move(5) -- should be modified
-				-- TODO
+				local ucs2be = t.text:sub(t.index + 1, t.index + 4)
+				table.insert(chars, ucs2be_to_utf8(unicodeToAsciis(ucs2be)))
+				t:move(5)
 			else
 				table.insert(chars, assert(jsondata.escape_from[t:cur()]))
 				t:move()
@@ -226,8 +279,8 @@ end
 ------------------------- API --------------------------
 
 --
--- FROM: string, number, object, array, true or false, null
--- TO: string, number, table[string], table[number], boolean, nil
+-- FROM JSON: string, number, object, array, true or false, null
+-- TO LUA: string, number, table[string], table[number], boolean, nil
 -- 
 function json.parse(text)
 	local t = jsondata:new(text)
@@ -236,8 +289,11 @@ function json.parse(text)
 	else error("Not an Object or an Array") end
 end
 
+-- FROM LUA TO JSON
 function json.stringify(obj)
 	return json.stringify_value(obj)
 end
 
+
+-- Usage: json = require "json"
 return json
