@@ -1,6 +1,3 @@
-# jsonlua
-
-
 # **jsonlua** #
 A [JSON](http://json.org/) Reader and Writer implemented in Lua-5.3 .  
 __*Copyright (c) 2016 sysu_AT < owtotwo@163.com >*__  
@@ -26,7 +23,7 @@ local obj = json.parse(str) -- a lua table
 print(json.stringify(obj)) -- same as str
 
 ```
-
+*Notice that the order of items in lua table parsed from JSON Object is uncertain.*
 
 ## License ##
 * GNU Lesser General Public License ([LGPL](LICENSE))  
